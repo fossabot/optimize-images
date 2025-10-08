@@ -4,6 +4,8 @@ from functools import lru_cache
 from optimize_images.data_structures import OutputConfiguration, TaskResult
 from optimize_images.platforms import IconGenerator
 
+from typing import Any
+
 
 @lru_cache(maxsize=None)
 def human(number: int, suffix='B') -> str:
@@ -19,44 +21,108 @@ def human(number: int, suffix='B') -> str:
     return f"{number:.1f}{'Yi'}{suffix}"
 
 
-def show_file_status(result: TaskResult, line_width: int, icons: IconGenerator):
-    output_config = result.output_config
+def _fmt_format(fmt: str) -> str:
+    """Normalize format names for compact display."""
+    if not fmt:
+        return ""
+    return "JPG" if fmt.upper() == "JPEG" else fmt.upper()
 
-    if output_config.quiet_mode or output_config.show_only_summary or output_config.show_overall_progress:
-        return
 
-    if result.was_optimized:
-        short_img = result.img[-(line_width - 17):].ljust(line_width - 17)
-        percent = 100 - (result.final_size / result.orig_size * 100)
-        h_orig = human(result.orig_size)
-        h_final = human(result.final_size)
+def _fmt_mode(mode: str, colors: int) -> str:
+    """Render image mode; for palette 'P' use P{colors} if colors > 0."""
+    if not mode:
+        return ""
+    m = mode.upper()
+    if m == "P" and isinstance(colors, int) and colors > 0:
+        return f"P{colors}"
+    return m
 
-        orig_format = result.orig_format.replace('JPEG', 'JPG')
-        result_format = result.result_format.replace('JPEG', 'JPG')
 
-        if result.orig_mode == "P":
-            o_colors = f"{result.orig_colors}"
-        else:
-            o_colors = ""
+def show_file_status(result: Any, line_width: int, icons: IconGenerator) -> None:
+    """
+    Two-line output for optimized files; one-line output for skipped files.
+    Compatible with PublicTaskResult and TaskResult.
+    """
+    img = getattr(result, "img", "")
+    was_optimized = getattr(result, "was_optimized", False)
+    was_downsized = getattr(result, "was_downsized", False)
+    orig_size = getattr(result, "orig_size", 0)
+    final_size = getattr(result, "final_size", 0)
+    orig_format = _fmt_format(getattr(result, "orig_format", ""))
+    result_format = _fmt_format(getattr(result, "result_format", ""))
+    orig_mode = _fmt_mode(
+        getattr(result, "orig_mode", ""), getattr(result, "orig_colors", 0)
+    )
+    result_mode = _fmt_mode(
+        getattr(result, "result_mode", ""), getattr(result, "final_colors", 0)
+    )
+    had_exif = bool(
+        getattr(result, "had_exif", False) or getattr(result, "has_exif", False)
+    )
 
-        if result.result_mode == "P":
-            colors = f"{result.final_colors}"
-        else:
-            colors = ""
+    # First line (build fixed prefix + variable path)
+    prefix = (
+        f"{icons.optimized}  [OPTIMIZED] "
+        if was_optimized
+        else f"{icons.skipped}  [SKIPPED] "
+    )
 
-        exif_str1 = icons.info if result.had_exif else ''
-        exif_str2 = icons.info if result.has_exif else ''
-        downstr = icons.downsized if result.was_downsized else ''
-        line1 = f'\n{icons.optimized}  [OPTIMIZED] {short_img}\n'
-        line2 = f'    {exif_str1} {orig_format}/{result.orig_mode}{o_colors}: {h_orig}' \
-            f'  ->  {downstr}{exif_str2}{result_format}/{result.result_mode}{colors}: ' \
-            f'{h_final} {icons.size_is_smaller} {percent:.1f}%'
-        img_status = line1 + line2
-    else:
-        short_img = result.img[-(line_width - 15):].ljust(line_width - 15)
-        img_status = f'\n{icons.skipped}  [SKIPPED] {short_img}'
+    path = img
 
-    print(img_status, end='')
+    def clamp(s: str) -> str:
+        return (
+            s[:line_width]
+            if isinstance(line_width, int) and line_width > 0
+            else s
+        )
+
+    def clamp_path_end(prefix_text: str, path_text: str) -> str:
+        """Truncate only the path from the left so the tail remains visible."""
+        if not (isinstance(line_width, int) and line_width > 0):
+            return prefix_text + path_text
+        available = line_width - len(prefix_text)
+        if available <= 0:
+            return (
+                prefix_text[: max(0, line_width - 1)] + "…"
+                if line_width > 0
+                else prefix_text
+            )
+        if len(path_text) <= available:
+            return prefix_text + path_text
+        keep = max(0, available - 1)  # reserve 1 for ellipsis
+        return prefix_text + ("…" + path_text[-keep:] if keep > 0 else "…")
+
+    # Print the first line with correct truncation rules
+    print(clamp_path_end(prefix, path))
+
+    # Only optimized files print the second line with details
+    if was_optimized:
+        saved_bytes = max(0, orig_size - final_size)
+        percent = (saved_bytes / orig_size * 100.0) if orig_size else 0.0
+
+        orig_h = human(orig_size)
+        final_h = human(final_size)
+
+        left = (
+            f"{orig_format}/{orig_mode}: {orig_h}"
+            if orig_format or orig_mode
+            else f"{orig_h}"
+        )
+        right = (
+            f"{result_format}/{result_mode}: {final_h}"
+            if result_format or result_mode
+            else f"{final_h}"
+        )
+
+        prefix2 = f"    {icons.info}  " if had_exif else "     "
+        downsized_text = icons.downsized if was_downsized else ""
+
+        line2 = (
+            f"{prefix2}{left}  {icons.arrow}  {downsized_text}"
+            f"{right} {icons.size_is_smaller} {percent:.1f}%"
+        )
+
+        print(clamp(line2))
 
 
 def show_final_report(found_files: int,
@@ -74,7 +140,7 @@ def show_final_report(found_files: int,
     :param bytes_saved: savings in file sizes (sum)
     :param time_passed: specify -1 in order to hide this (watch directory)
     """
-    
+
     if output_config.quiet_mode:
         return
 
@@ -87,16 +153,17 @@ def show_final_report(found_files: int,
         average = 0
         percent = 0
 
-    report = f"\n{40 * '-'}\n"
+    # No leading or trailing extra blank lines around the dashed separator
+    report = f"{40 * '-'}\n"
     if time_passed == -1:
         report += f"\n   Processed {found_files} files ({human(src_size)})."
     else:
         report += f"\n   Processed {found_files} files ({human(src_size)}) in " \
-            f"{time_passed:.1f}s ({fps:.1f} f/s)."
+                  f"{time_passed:.1f}s ({fps:.1f} f/s)."
 
     report += f"\n   Optimized {optimized_files} files." \
-        f"\n   Average savings: {human(average)} per optimized file" \
-        f"\n   Total space saved: {human(bytes_saved)} / {percent:.1f}%\n"
+              f"\n   Average savings: {human(average)} per optimized file" \
+              f"\n   Total space saved: {human(bytes_saved)} / {percent:.1f}%\n"
     print(report)
 
 

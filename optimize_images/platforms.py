@@ -10,30 +10,43 @@ from optimize_images.constants import IOS_FONT, IPHONE_FONT_SIZE, IPAD_FONT_SIZE
 from optimize_images.constants import IOS_WORKERS
 from optimize_images.data_structures import PPoolExType, TPoolExType
 
+import platform
+
 
 class IconGenerator:
-    def __init__(self):
-        try:
-            if platform.system() in ('Windows', 'Haiku'):
-                raise Exception
+    """Provides icons for file status output, with Unicode or ASCII fallback."""
 
-            print('\n\nUsing these symbols:\n\n'
-                  '  ✅ Optimized file     ℹ️  EXIF info present\n'
-                  '  🔴 Skipped file       ⤵  Image was downsized     🔻 Size reduction (%)\n')
-            self.info = 'ℹ️ '
-            self.downsized = '⤵ '
-            self.optimized = '✅'
-            self.skipped = '🔴'
-            self.size_is_smaller = '🔻'
-        except (UnicodeEncodeError, Exception):
-            print('\n\nUsing these symbols:\n\n'
-                  '  OK Optimized file      i EXIF info present\n'
-                  '  -- Skipped file        V Image was downsized      v Size reduction')
-            self.info = 'i'
-            self.downsized = 'V '
-            self.optimized = 'OK'
-            self.skipped = '--'
-            self.size_is_smaller = 'v'
+    def __init__(self) -> None:
+        system = platform.system()
+        self.use_unicode = system not in ("Windows", "Haiku")
+        self.arrow = "->"
+
+        if self.use_unicode:
+            self.info = "ℹ️"
+            self.downsized = "⤵ "
+            self.optimized = "✅"
+            self.skipped = "🔴"
+            self.size_is_smaller = "🔻"
+            self.legend_text = (
+                "\n\nUsing these symbols:\n\n"
+                "  ✅ Optimized file     ℹ️  EXIF info present\n"
+                "  🔴 Skipped file       ⤵  Image was downsized     🔻 Size reduction (%)\n"
+            )
+        else:
+            self.info = "i"
+            self.downsized = "V"
+            self.optimized = "OK"
+            self.skipped = "--"
+            self.size_is_smaller = "v"
+            self.legend_text = (
+                "\n\nUsing these symbols:\n\n"
+                "  OK Optimized file      i EXIF info present\n"
+                "  -- Skipped file        V Image was downsized      v Size reduction\n"
+            )
+
+    def print_legend(self) -> None:
+        """Print a legend explaining the icons in use."""
+        print(self.legend_text)
 
 
 @lru_cache(maxsize=None)

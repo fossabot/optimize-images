@@ -25,39 +25,41 @@ Some aditional features can be added which require the presence of other
 third-party packages that are not written in pure Python, but those packages and
 the features depending on them should be treated as optional.
 
+Note for developers integrating this package:
+
+For programmatic use in third-party applications, please prefer the high-level
+API in optimize_images.api (optimize_single_image / optimize_as_batch).
+
 © 2025 Victor Domingos & contributers (MIT License)
 """
-import concurrent.futures.process
+import concurrent.futures
 import os
 import sys
-
-from optimize_images.exceptions import OIImagesNotFoundError, OIInvalidPathError
-from optimize_images.exceptions import OIKeyboardInterrupt
-
-try:
-    from PIL import Image
-except ImportError:
-    print('\n    This application requires Pillow to be installed. '
-          'Please, install it first.\n')
-    sys.exit()
-
 from timeit import default_timer as timer
 
-from optimize_images.file_utils import search_images
-from optimize_images.data_structures import OutputConfiguration, Task
+from optimize_images.data_structures import Task
 from optimize_images.do_optimization import do_optimization
+
+from optimize_images.exceptions import OIImagesNotFoundError, OIInvalidPathError, OIKeyboardInterrupt
+from optimize_images.exceptions import OIKeyboardInterrupt
+from optimize_images.file_utils import search_images
 from optimize_images.platforms import adjust_for_platform, IconGenerator
+from optimize_images.reporting import human, show_file_status, show_final_report
 from optimize_images.argument_parser import get_args
-from optimize_images.reporting import (show_file_status,
-                                       show_final_report,
-                                       show_img_exception,
-                                       human)
 
+# Use only public API types
+from optimize_images.api import (
+    optimize_as_batch_stream,
+    watch_directory,
+    PublicBatchOptions,
+)
 
-def count_gen(gen):
-    l = list(gen)
-    return len(l), l
-
+def main():
+    args = get_args()
+    try:
+        optimize_batch(*args)
+    except (OIImagesNotFoundError, OIInvalidPathError, OIKeyboardInterrupt) as ex:
+        print(ex.message)
 
 def optimize_batch(src_path, watch_dir, recursive, quality, remove_transparency,
                    reduce_colors, max_colors, max_w, max_h, keep_exif, convert_all,
@@ -75,89 +77,96 @@ def optimize_batch(src_path, watch_dir, recursive, quality, remove_transparency,
     total_src_size = 0
     total_bytes_saved = 0
 
+    # Build PublicBatchOptions for the public API
+    options = PublicBatchOptions(
+        src_path=src_path,
+        recursive=recursive,
+        quality=quality,
+        remove_transparency=remove_transparency,
+        reduce_colors=reduce_colors,
+        max_colors=max_colors,
+        max_w=max_w,
+        max_h=max_h,
+        keep_exif=keep_exif,
+        convert_all=convert_all,
+        conv_big=conv_big,
+        force_del=force_del,
+        bg_color=bg_color,
+        grayscale=grayscale,
+        ignore_size_comparison=ignore_size_comparison,
+        fast_mode=fast_mode,
+        jobs=jobs,
+    )
+
     if watch_dir:
-        if not os.path.isdir(os.path.abspath(src_path)):
-            msg = "\nPlease specify a valid path to an existing folder."
-            raise OIInvalidPathError(msg)
+        # Use public API watcher with CLI rendering callback
+        import threading
+        stop_event = threading.Event()
 
-        watch_task = Task(src_path, quality, remove_transparency, reduce_colors,
-                          max_colors, max_w, max_h, keep_exif, convert_all,
-                          conv_big, force_del, bg_color, grayscale,
-                          ignore_size_comparison, fast_mode, output_config)
+        def on_result(public_result):
+            nonlocal found_files, optimized_files, skipped_files, total_src_size, total_bytes_saved
+            found_files += 1
+            total_src_size += public_result.orig_size
+            if public_result.was_optimized:
+                optimized_files += 1
+                total_bytes_saved += public_result.orig_size - public_result.final_size
+            else:
+                skipped_files += 1
 
-        from optimize_images.watch import watch_for_new_files
-        watch_for_new_files(watch_task)
+            if output_config.quiet_mode or output_config.show_only_summary:
+                return
+
+            if output_config.show_overall_progress:
+                cur_time_passed = round(timer() - appstart)
+                message = f"[{cur_time_passed:.1f}s] {IconGenerator().optimized} {optimized_files} {IconGenerator().skipped} {skipped_files}, saved {human(total_bytes_saved)}"
+                print(message, end='\r')
+            else:
+                show_file_status(public_result, line_width, IconGenerator())
+
+        try:
+            watch_directory(options, on_result=on_result, stop_event=stop_event)
+        except KeyboardInterrupt:
+            msg = "\b \n\n  == Operation was interrupted by the user. ==\n"
+            raise OIKeyboardInterrupt(msg)
         return
 
-    # Optimize all images in a directory
-    elif os.path.isdir(src_path):
+    icons = None
+    if not output_config.quiet_mode and not output_config.show_only_summary:
+        icons = IconGenerator()
 
-        if not output_config.quiet_mode and not output_config.show_only_summary:
-            icons = IconGenerator()
-            recursion_txt = 'Recursively searching' if recursive else 'Searching'
-            opt_msg = 'and optimizing image files'
-            exif_txt = '(keeping exif data) ' if keep_exif else ''
-            print(f"\n{recursion_txt} {opt_msg} {exif_txt}in:\n{src_path}\n")
+    # Print introductory header (only for non-quiet, non-summary, non-progress modes)
+    if not output_config.quiet_mode and not output_config.show_only_summary and not output_config.show_overall_progress:
+        icons.print_legend()
 
-        tasks = (Task(img_path, quality, remove_transparency, reduce_colors,
-                      max_colors, max_w, max_h, keep_exif, convert_all, conv_big,
-                      force_del, bg_color, grayscale, ignore_size_comparison, fast_mode,
-                      output_config)
-                 for img_path in search_images(src_path, recursive=recursive))
+        print("\nRecursively searching and optimizing image files in:")
+        # Respect line width if provided
+        src_line = options.src_path
+        if isinstance(line_width, int) and line_width > 0:
+            src_line = src_line[:line_width]
+        print(src_line + "\n\n")
 
-        num_images, tasks = count_gen(tasks)
-        with our_pool_executor(max_workers=workers) as executor:
-            current_img = ''
-            try:
-                for result in executor.map(do_optimization, tasks):
-                    current_img = result.img
-                    found_files += 1
-                    total_src_size += result.orig_size
-                    if result.was_optimized:
-                        optimized_files += 1
-                        total_bytes_saved += result.orig_size - result.final_size
-                    else:
-                        skipped_files += 1
+    try:
+        for result in optimize_as_batch_stream(options):
+            found_files += 1
+            total_src_size += result.orig_size
+            if result.was_optimized:
+                optimized_files += 1
+                total_bytes_saved += result.orig_size - result.final_size
+            else:
+                skipped_files += 1
 
-                    if result.output_config.quiet_mode or result.output_config.show_only_summary:
-                        continue
+            if output_config.quiet_mode or output_config.show_only_summary:
+                continue
 
-                    if result.output_config.show_overall_progress:
-                        cur_time_passed = round(timer() - appstart)
-                        perc_done = found_files / num_images * 100
-                        message = f"[{cur_time_passed:.1f}s {perc_done:.1f}%] {icons.optimized} {optimized_files} {icons.skipped} {skipped_files}, saved {human(total_bytes_saved)}"
-                        print(message, end='\r')
-                    else:
-                        show_file_status(result, line_width, icons)
-
-            except concurrent.futures.process.BrokenProcessPool as bppex:
-                show_img_exception(bppex, current_img)
-            except KeyboardInterrupt:
-                msg = "\b \n\n  == Operation was interrupted by the user. ==\n"
-                raise OIKeyboardInterrupt(msg)
-
-    # Optimize a single image
-    elif os.path.isfile(src_path) and '~temp~' not in src_path:
-        found_files += 1
-
-        img_task = Task(src_path, quality, remove_transparency, reduce_colors,
-                        max_colors, max_w, max_h, keep_exif, convert_all, conv_big,
-                        force_del, bg_color, grayscale, ignore_size_comparison, fast_mode,
-                        output_config)
-
-        result = do_optimization(img_task)
-        total_src_size = result.orig_size
-        if result.was_optimized:
-            optimized_files = 1
-            total_bytes_saved = result.orig_size - result.final_size
-
-        if not result.output_config.quiet_mode and not result.output_config.show_only_summary:
-            icons = IconGenerator()
-            show_file_status(result, line_width, icons)
-    else:
-        msg = "\nNo image files were found. Please enter a valid path to the " \
-              "image file or the folder containing any images to be processed."
-        raise OIImagesNotFoundError(msg)
+            if output_config.show_overall_progress:
+                cur_time_passed = round(timer() - appstart)
+                message = f"[{cur_time_passed:.1f}s] {icons.optimized if icons else ''} {optimized_files} {icons.skipped if icons else ''} {skipped_files}, saved {human(total_bytes_saved)}"
+                print(message, end='\r')
+            else:
+                show_file_status(result, line_width, icons if icons else IconGenerator())
+    except KeyboardInterrupt:
+        msg = "\b \n\n  == Operation was interrupted by the user. ==\n"
+        raise OIKeyboardInterrupt(msg)
 
     if found_files:
         time_passed = timer() - appstart
@@ -166,15 +175,6 @@ def optimize_batch(src_path, watch_dir, recursive, quality, remove_transparency,
     else:
         msg = "\nNo supported image files were found in the specified directory."
         raise OIImagesNotFoundError(msg)
-
-
-def main():
-    args = get_args()
-    try:
-        optimize_batch(*args)
-    except (OIImagesNotFoundError, OIInvalidPathError, OIKeyboardInterrupt) as ex:
-        print(ex.message)
-
 
 if __name__ == "__main__":
     main()
