@@ -268,9 +268,9 @@ def watch_directory(
                 from optimize_images.platforms import IconGenerator
                 icons = IconGenerator()
                 print("\nUsing these symbols:\n")
-                print(f"  {icons.optimized} Optimized file     {icons.had_exif} EXIF info present")
+                print(f"  {icons.optimized} Optimized file     {icons.info} EXIF info present")
                 print(
-                    f"  {icons.skipped} Skipped file       {icons.downsized} Image was downsized     {icons.bytes_saved} Size reduction (%)\n")
+                    f"  {icons.skipped} Skipped file       {icons.downsized} Image was downsized     {icons.size_is_smaller} Size reduction (%)\n")
                 self.symbols_shown = True
 
             # Create task for this specific file - use ignore_size_comparison as the constructor parameter
