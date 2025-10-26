@@ -1,0 +1,43 @@
+tests:
+  - name: "Watch new JPEG file"
+    input: "jpeg_with_exif.jpg"
+    args: []
+    check: "file_size(out) < file_size(orig)"
+    note: "Watcher should optimize new JPEG added to directory"
+
+  - name: "Watch new PNG file"
+    input: "png_with_transparency.png"
+    args: []
+    check: "file_size(out) <= file_size(orig)"
+    note: "Watcher should optimize new PNG added to directory"
+
+  - name: "Watch ignore non-image"
+    input: "not_image.txt"
+    args: []
+    check: "file_size(out) == file_size(orig)"
+    note: "Watcher should ignore non-image files"
+
+  - name: "Watch subdirectory file"
+    input: "jpeg_with_exif.jpg"
+    subdir: "nested"
+    args: []
+    check: "file_size(out) < file_size(orig)"
+    note: "Watcher should also optimize images in subdirectories"
+
+  - name: "Watch JPEG Keep EXIF"
+    input: "jpeg_with_exif.jpg"
+    args: ["-ke"]
+    check: "has_exif(out)"
+    note: "Watcher should preserve EXIF metadata when configured"
+
+  - name: "Watch JPEG Default/Remove EXIF"
+    input: "jpeg_with_exif.jpg"
+    args: []
+    check: "not has_exif(out)"
+    note: "Watcher should remove EXIF metadata by default"
+
+  - name: "Watch PNG Remove Transparency / Set black background"
+    input: "png_with_transparency.png"
+    args: ["-rt", "-bg", "0", "0", "0"]
+    check: "file_size(out) <= file_size(orig) and image_info(out)[0] == 'PNG' and ('transparency' not in image_info(out)[2])"
+    note: "Watcher should remove transparency when configured"

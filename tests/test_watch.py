@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import subprocess
 import shutil
+import time
 from pathlib import Path
 import os
 import yaml
@@ -10,38 +11,55 @@ from PIL import Image
 
 BASE = Path(__file__).parent
 INPUT = BASE / "test-images"
-TMP = BASE / "tmp"
-TMP.mkdir(exist_ok=True)
+TMP = BASE / "tmp" / "watch"
+TMP.mkdir(parents=True, exist_ok=True)
 
 _created_tmp_files = set()
 
 
-def run_optimize(args, input_file):
-    tmp_file = TMP / input_file.name
+# --- Helpers ---
+
+def run_watcher(input_file, args=None, subdir=None, timeout=5):
+    """
+    Run optimize-images in watch mode, copy input_file into TMP (or subdir),
+    and wait until it's processed or timeout expires.
+    """
+    target_dir = TMP
+    if subdir:
+        target_dir = TMP / subdir
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+    tmp_file = target_dir / input_file.name
     if tmp_file.exists():
         tmp_file.unlink()
     shutil.copy(input_file, tmp_file)
     _created_tmp_files.add(tmp_file)
-    subprocess.run(["optimize-images", str(tmp_file)] + args + ["--quiet"], check=True)
 
-    # If a new file was created with a different extension (-ca), report it.
-    # Example: input.png => output.jpg
-    stem = tmp_file.stem
-    parent = tmp_file.parent
-    candidates = [
-        parent / f"{stem}.jpg",
-        parent / f"{stem}.jpeg",
-        parent / f"{stem}.png",
-        parent / f"{stem}.webp",
-        parent / f"{stem}.avif",
-        parent / f"{stem}.heic",
-    ]
-    for c in candidates:
-        if c.exists() and c != tmp_file:
-            _created_tmp_files.add(c)
-            return c
+    cmd = ["optimize-images", "-wd", str(TMP)] + (args or []) + ["--quiet"]
 
-    return tmp_file
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    # Wait until file size changes or timeout
+    size_before = os.path.getsize(tmp_file)
+    out_file = tmp_file
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if out_file.exists() and os.path.getsize(out_file) != size_before:
+            break
+        time.sleep(0.5)
+
+    # Stop watcher
+    proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+    return out_file
 
 
 def has_exif(path):
@@ -60,26 +78,6 @@ def file_size(path):
     return os.path.getsize(path)
 
 
-def palette_color_count(path):
-    with Image.open(path) as img:
-        if img.mode != "P" or img.palette is None:
-            return None
-        raw = getattr(img.palette, "palette", None)  # bytes, 3 bytes per color
-        return (len(raw) // 3) if raw else 0
-
-
-def unique_color_count(path, cap=1_000_000):
-    with Image.open(path) as img:
-        rgba = img.convert("RGBA")
-        colors = rgba.getcolors(cap)
-        return len(colors) if colors is not None else len(set(rgba.getdata()))
-
-
-def image_mode(path):
-    with Image.open(path) as img:
-        return img.mode
-
-
 def image_info(path):
     with Image.open(path) as img:
         fmt = img.format
@@ -89,7 +87,7 @@ def image_info(path):
 
 
 def load_tests():
-    with open(BASE / "tests_config.yaml", "r", encoding="utf-8") as f:
+    with open(BASE / "test_watch_config.yaml", "r", encoding="utf-8") as f:
         return yaml.safe_load(f)["tests"]
 
 
@@ -99,12 +97,16 @@ def case_id(t):
     return f"{base} [{note}]" if note else base
 
 
+# --- Parametrized tests ---
+
 @pytest.mark.parametrize("case", load_tests(), ids=case_id)
-def test_optimize_case(case):
+def test_watch_case(case):
     input_file = INPUT / case["input"]
     assert input_file.exists(), f"MISSING input: {case['input']}"
 
-    out_file = run_optimize(case["args"], input_file)
+    args = case.get("args") or []
+    subdir = case.get("subdir")
+    out_file = run_watcher(input_file, args=args, subdir=subdir)
 
     context = {
         "orig": input_file,
@@ -112,9 +114,6 @@ def test_optimize_case(case):
         "file_size": file_size,
         "image_info": image_info,
         "has_exif": has_exif,
-        "palette_color_count": palette_color_count,
-        "unique_color_count": unique_color_count,
-        "image_mode": image_mode,
     }
 
     try:
@@ -135,5 +134,4 @@ def test_optimize_case(case):
 
 if __name__ == "__main__":
     import sys
-
     sys.exit(pytest.main(["-v", "--color=yes", __file__]))

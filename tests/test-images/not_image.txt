@@ -1,0 +1,1 @@
+Text file to test with a file that not an image.
