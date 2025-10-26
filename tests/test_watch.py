@@ -32,8 +32,6 @@ def run_watcher(input_file, args=None, subdir=None, timeout=5):
     tmp_file = target_dir / input_file.name
     if tmp_file.exists():
         tmp_file.unlink()
-    shutil.copy(input_file, tmp_file)
-    _created_tmp_files.add(tmp_file)
 
     cmd = ["optimize-images", "-wd", str(TMP)] + (args or []) + ["--quiet"]
 
@@ -43,7 +41,11 @@ def run_watcher(input_file, args=None, subdir=None, timeout=5):
         stderr=subprocess.PIPE,
     )
 
-    # Wait until file size changes or timeout
+    time.sleep(1)
+
+    shutil.copy(input_file, tmp_file)
+    _created_tmp_files.add(tmp_file)
+
     size_before = os.path.getsize(tmp_file)
     out_file = tmp_file
     deadline = time.time() + timeout
@@ -52,7 +54,6 @@ def run_watcher(input_file, args=None, subdir=None, timeout=5):
             break
         time.sleep(0.5)
 
-    # Stop watcher
     proc.terminate()
     try:
         proc.wait(timeout=2)
