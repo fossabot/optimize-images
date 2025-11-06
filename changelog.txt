@@ -8,10 +8,13 @@ Version history:
 v.2.0.0 - 2025-??-??
  * Removed dependency on piexif, since Pillow supports EXIF metadata (thanks to
    @varnav for the alert on this).
+ * Refactored some code to make it easier to import optimize-images as a
+   package in your python projects, without having to execute the CLI app.
  * Changes in requirements to allow newer versions of Python and dependencies.
  * Removed support for older python versions, keeping only active support
    versions.
  * Removed support for Pythonista/iOS, since it is no longer maintained.
+ * Added some basic tests.
 
 ---
 v.1.5.1 - 2022-04-18
