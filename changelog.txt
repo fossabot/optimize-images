@@ -13,6 +13,8 @@ v.2.0.0 - 2025-??-??
  * Changes in requirements to allow newer versions of Python and dependencies.
  * Removed support for older python versions, keeping only active support
    versions.
+ * Initial, experimental support for free threaded python, which seems
+   significantly faster (tests and feedback are always very welcome).
  * Removed support for Pythonista/iOS, since it is no longer maintained.
  * Added some basic tests.
 

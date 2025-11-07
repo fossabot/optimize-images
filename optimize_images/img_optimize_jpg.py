@@ -2,7 +2,7 @@
 import os
 from io import BytesIO
 
-from PIL import Image, ImageFile, ImageOps
+from PIL import Image, ImageFile
 
 from .data_structures import Task, TaskResult
 from .img_aux_processing import downsize_img, save_compressed
@@ -23,65 +23,71 @@ def optimize_jpg(task: Task) -> TaskResult:
     :param task: A Task object containing all the parameters for the image processing.
     :return: A TaskResult object containing information for single file report.
     """
-    img: Image.Image = Image.open(task.src_path)
-    orig_format = img.format
-    orig_mode = img.mode
+    with Image.open(task.src_path) as img:
+        orig_format = img.format
+        orig_mode = img.mode
 
-    orig_size = os.path.getsize(task.src_path)
-    orig_colors, final_colors = 0, 0
+        orig_size = os.path.getsize(task.src_path)
+        orig_colors, final_colors = 0, 0
 
-    result_format = "JPEG"
-    # Detect EXIF presence using Pillow
-    try:
-        exif = img.getexif()
-        had_exif = bool(exif and len(exif) > 0)
-    except Exception:
-        had_exif = False
+        result_format = "JPEG"
 
-    if task.max_w or task.max_h:
-        img, was_downsized = downsize_img(img, task.max_w, task.max_h)
-    else:
-        was_downsized = False
+        # Detect EXIF presence using Pillow
+        try:
+            exif = img.getexif()
+            had_exif = bool(exif and len(exif) > 0)
+        except Exception:
+            had_exif = False
+            exif = None
 
-    if task.grayscale:
-        img = make_grayscale(img)
+        if task.max_w or task.max_h:
+            img, was_downsized = downsize_img(img, task.max_w, task.max_h)
+        else:
+            was_downsized = False
 
-    # only use progressive if file size is bigger
-    use_progressive_jpg = orig_size > 10000
+        if task.grayscale:
+            img = make_grayscale(img)
 
-    if task.fast_mode:
-        quality = task.quality
-    else:
-        quality, _ = jpeg_dynamic_quality(img)
+        # only use progressive if file size is bigger
+        use_progressive_jpg = orig_size > 10000
 
-    tmp_buffer = BytesIO()  # In-memory buffer
+        if task.fast_mode:
+            quality = task.quality
+        else:
+            quality, _ = jpeg_dynamic_quality(img)
 
-    # If keeping EXIF and the source had EXIF, pass it through on save.
-    save_kwargs = dict(
-        quality=quality,
-        optimize=True,
-        progressive=use_progressive_jpg,
-        format=result_format
-    )
-    if task.keep_exif and had_exif and exif:
-        save_kwargs["exif"] = exif
+        tmp_buffer = BytesIO()  # In-memory buffer
 
-    try:
-        img.save(tmp_buffer, **save_kwargs)
-    except IOError:
-        ImageFile.MAXBLOCK = img.size[0] * img.size[1]
-        img.save(tmp_buffer, **save_kwargs)
+        # If keeping EXIF and the source had EXIF, pass it through on save.
+        save_kwargs = {
+            'quality': quality,
+            'optimize': True,
+            'progressive': use_progressive_jpg,
+            'format': result_format
+        }
 
-    has_exif = bool(save_kwargs.get("exif"))
+        if task.keep_exif and had_exif and exif:
+            save_kwargs['exif'] = exif
 
-    img_mode = img.mode
-    img.close()
+        try:
+            img.save(tmp_buffer, **save_kwargs)
+        except IOError:
+            ImageFile.MAXBLOCK = img.size[0] * img.size[1]
+            img.save(tmp_buffer, **save_kwargs)
+
+        has_exif = bool(save_kwargs.get('exif'))
+        img_mode = img.mode
+
     compare_sizes = not task.no_size_comparison
-    was_optimized, final_size = save_compressed(task.src_path,
-                                                tmp_buffer,
-                                                compare_sizes)
+    was_optimized, final_size = save_compressed(
+        task.src_path,
+        tmp_buffer,
+        compare_sizes
+    )
 
-    return TaskResult(task.src_path, orig_format, result_format, orig_mode,
-                      img_mode, orig_colors, final_colors, orig_size,
-                      final_size, was_optimized, was_downsized, had_exif,
-                      has_exif, task.output_config)
+    return TaskResult(
+        task.src_path, orig_format, result_format, orig_mode,
+        img_mode, orig_colors, final_colors, orig_size,
+        final_size, was_optimized, was_downsized, had_exif,
+        has_exif, task.output_config
+    )

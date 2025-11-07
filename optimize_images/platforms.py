@@ -1,20 +1,22 @@
 # encoding: utf-8
-import concurrent.futures
+import os
 import platform
 import shutil
+import sys
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from functools import lru_cache
-from multiprocessing import cpu_count
-from typing import Tuple, Union
+from typing import TypeAlias
 
-from optimize_images.constants import IOS_FONT, IPHONE_FONT_SIZE, IPAD_FONT_SIZE
-from optimize_images.constants import IOS_WORKERS
 from optimize_images.data_structures import PPoolExType, TPoolExType
 
-import platform
+ExecutorClassType: TypeAlias = type[ThreadPoolExecutor] | type[ProcessPoolExecutor]
 
 
 class IconGenerator:
     """Provides icons for file status output, with Unicode or ASCII fallback."""
+
+    __slots__ = ('use_unicode', 'arrow', 'info', 'downsized', 'optimized',
+                 'skipped', 'size_is_smaller', 'legend_text')
 
     def __init__(self) -> None:
         system = platform.system()
@@ -49,36 +51,59 @@ class IconGenerator:
         print(self.legend_text)
 
 
-@lru_cache(maxsize=None)
-def adjust_for_platform() -> Tuple[int, Union[TPoolExType, PPoolExType], int]:
-    if platform.system() == 'Darwin':
-        if platform.machine().startswith('iPad'):
-            device = "iPad"
-        elif platform.machine().startswith('iP'):
-            device = "iPhone"
-        else:
-            device = "mac"
-    else:
-        device = "other"
+@lru_cache(maxsize=1)
+def is_free_threaded() -> bool:
+    """
+    Detect if running in free-threaded Python (3.13t+).
+    Returns True if GIL is disabled.
+    """
+    return hasattr(sys, '_is_gil_enabled') and not sys._is_gil_enabled()
 
-    if device in ("iPad", "iPhone"):
-        # Adapt for smaller screen sizes in iPhone and iPod touch
-        import ui
-        import console
-        console.clear()
-        if device == 'iPad':
-            font_size = IPAD_FONT_SIZE
-        else:
-            font_size = IPHONE_FONT_SIZE
-        console.set_font(IOS_FONT, font_size)
-        screen_width = ui.get_screen_size().width
-        char_width = ui.measure_string('.', font=(IOS_FONT, font_size)).width
-        line_width = int(screen_width / char_width - 1.5) - 1
-        t_pool_ex = concurrent.futures.ThreadPoolExecutor
-        default_workers = IOS_WORKERS
-        return line_width, t_pool_ex, default_workers
-    else:
+
+@lru_cache(maxsize=1)
+def get_cpu_count() -> int:
+    """Get CPU count with caching and fallback."""
+    try:
+        # Use os.cpu_count() for better compatibility
+        count = os.cpu_count()
+        return count if count else 4
+    except (AttributeError, NotImplementedError):
+        return 4
+
+
+@lru_cache(maxsize=1)
+def adjust_for_platform() -> tuple[int, ExecutorClassType, int]:
+    """
+    Adjusts to allow fine-tuning the program's execution according to
+    the current platform and to return the optimal executor type.
+
+    Returns:
+        tuple: (line_width, executor_class, default_workers)
+    """
+    # Get cached CPU count
+    num_cpus = get_cpu_count()
+
+    # Determine terminal width
+    try:
         line_width = shutil.get_terminal_size((80, 24)).columns
-        p_pool_ex = concurrent.futures.ProcessPoolExecutor
-        default_workers = cpu_count() + 1
-        return line_width, p_pool_ex, default_workers
+    except (OSError, ValueError):
+        line_width = 80
+
+    if is_free_threaded():
+        # Free-threaded Python: threads are truly parallel
+        executor_class = ThreadPoolExecutor
+        default_workers = num_cpus
+    elif os.name == "nt":
+        # Windows: ThreadPoolExecutor to avoid ProcessPoolExecutor overhead
+        executor_class = ThreadPoolExecutor
+        default_workers = min(num_cpus * 2, 32)
+    elif platform.system() == "Darwin":
+        # macOS: ThreadPoolExecutor for better resource handling
+        executor_class = ThreadPoolExecutor
+        default_workers = min(num_cpus * 4, 64)
+    else:
+        # Unix/Linux: ProcessPoolExecutor to bypass GIL for CPU-intensive work
+        executor_class = ProcessPoolExecutor
+        default_workers = num_cpus + 1
+
+    return line_width, executor_class, default_workers
