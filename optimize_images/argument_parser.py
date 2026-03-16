@@ -4,6 +4,7 @@ import platform
 import re
 import sys
 from argparse import ArgumentParser
+from importlib.metadata import version, PackageNotFoundError
 
 import PIL  # it exists, was checked on main
 
@@ -11,32 +12,47 @@ from optimize_images import __version__
 from optimize_images.constants import DEFAULT_QUALITY, SUPPORTED_FORMATS
 from optimize_images.data_structures import OutputConfiguration
 
-
 def get_version_info() -> str:
-    """ Get a string that displays current application version as well as
-        some useful environment info.
-    """
+    """Returns a string with the current application version and environment info."""
 
+    pillow_version = _get_package_version(
+        "Pillow",
+        fallback="not found"
+    )
+    watchdog_version = _get_package_version(
+        "watchdog",
+        fallback="missing (package needed for watching folders for changes)"
+    )
+    python_version = (
+        f"Python {platform.python_version()}"
+        f"{' (free-threaded)' if _is_free_threaded() else ''}"
+        f" ({sys.executable})"
+    )
+
+    return (
+        f"\nOptimize Images {__version__}"
+        f"\n\nRunning environment:"
+        f"\n  - Location: {sys.argv[0]}"
+        f"\n  - Pillow {pillow_version}"
+        f"\n  - {python_version}"
+        f"\n\nOptional packages:"
+        f"\n  - Watchdog {watchdog_version}\n\n"
+    )
+
+
+def _is_free_threaded() -> bool:
+    """Returns True if running on a free-threaded (GIL-disabled) Python build."""
+    if hasattr(sys, "_is_gil_enabled"):
+        return not sys._is_gil_enabled()
+    return False
+
+
+def _get_package_version(package: str, fallback: str = "unknown") -> str:
+    """Returns the installed version of a package, or the fallback string."""
     try:
-        import watchdog.version
-        wd_version = watchdog.version.VERSION_STRING
-    except ImportError:
-        wd_version = "missing (package needed for watching folders for changes)"
-
-    try:
-        pillow_version = PIL.__version__
-    except AttributeError:
-        pillow_version = PIL.PILLOW_VERSION
-
-    python_version = f'Python {platform.python_version()} ({sys.executable})'
-
-    return f'\nOptimize Images {__version__}' \
-           f'\n\nRunning environment:' \
-           f'\n  - Location: {sys.argv[0]}' \
-           f'\n  - Pillow {pillow_version}' \
-           f'\n  - {python_version}' \
-           f'\n\nOptional packages:' \
-           f'\n  - Watchdog {wd_version}\n\n'
+        return version(package)
+    except PackageNotFoundError:
+        return fallback
 
 
 def get_formats() -> str:
