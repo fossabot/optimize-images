@@ -1,4 +1,5 @@
 # Optimize Images [![Github commits (since latest release)](https://img.shields.io/github/commits-since/victordomingos/optimize-images/latest.svg)](https://github.com/victordomingos/optimize-images) ![PyPI](https://img.shields.io/pypi/v/optimize-images) ![PyPI - Downloads](https://img.shields.io/pypi/dm/optimize-images)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fvictordomingos%2Foptimize-images.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fvictordomingos%2Foptimize-images?ref=badge_shield)
 A command-line interface (CLI) utility written in pure Python to help you 
 reduce the file size of images.
 
@@ -134,3 +135,7 @@ optimize-images --help
 ## Did you find a bug or do you have a suggestion?
 
 Please let me know, by opening a new issue or a pull request.
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fvictordomingos%2Foptimize-images.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fvictordomingos%2Foptimize-images?ref=badge_large)
